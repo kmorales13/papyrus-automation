@@ -5,6 +5,7 @@ namespace Papyrus
     public struct RunConfiguration
     {
         public string BdsPath;
+        public string BdsFileName;
         public string WorldName;
         public string PapyrusBinPath;
         public string PapyrusGlobalArgs;
@@ -13,6 +14,7 @@ namespace Papyrus
         public string ArchivePath;
         public int BackupsToKeep;
         public bool BackupOnStartup;
+        public bool EnableKeepAlive;
         public bool EnableRenders;
         public bool EnableBackups;
         public double RenderInterval;

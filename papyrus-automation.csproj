@@ -1,15 +1,23 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
   <PropertyGroup>
-    <DefineConstants Condition="'$(OutputType)' == 'Library'">IS_LIB</DefineConstants>
+    <DefineConstants Condition="'$(OutputType)' == 'Library'"></DefineConstants>
     <PublishSingleFile Condition="'$(OutputType)' == 'Exe' And '$(Configuration)' == 'Release'">true</PublishSingleFile>
     <TargetFramework>netcoreapp3.1</TargetFramework>
     <RootNamespace>Papyrus</RootNamespace>
     <Configurations>Debug;Release;</Configurations>
     <Authors>clarkx86</Authors>
     <RepositoryUrl>https://github.com/clarkx86/papyrus-automation</RepositoryUrl>
+    <FileUpgradeFlags>40</FileUpgradeFlags>
+    <UpgradeBackupLocation>D:\Projects\papyrus-automation\Backup\</UpgradeBackupLocation>
+    <OldToolsVersion>2.0</OldToolsVersion>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
-
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Options" Version="6.6.0.161">
       <PrivateAssets Condition="'$(OutputType)' == 'Library'">all</PrivateAssets>
@@ -18,5 +26,4 @@
       <PrivateAssets Condition="'$(OutputType)' == 'Library'">all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
-
 </Project>

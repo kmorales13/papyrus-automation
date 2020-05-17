@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Papyrus.Automation
 {
@@ -23,9 +24,12 @@ namespace Papyrus.Automation
                 try
                 {
                     result = Process.HasExited ? false : true;
-                } catch {
+                } 
+                catch 
+                {
                     result = false;
                 }
+
                 return result;
             }
         }
@@ -34,19 +38,18 @@ namespace Papyrus.Automation
         public ProcessManager(ProcessStartInfo startInfo)
         {
             _startInfo = startInfo;
-            this.Process = new Process();
-            this.Process.StartInfo = startInfo;
-            this.Process.StartInfo.RedirectStandardInput = true;
-            this.Process.StartInfo.RedirectStandardOutput = true;
-            this.Process.StartInfo.UseShellExecute = false;
-            this.Process.OutputDataReceived += OutputTextReceived;
+            Process = new Process();
+            Process.StartInfo = startInfo;
+            Process.StartInfo.RedirectStandardInput = true;
+            Process.StartInfo.RedirectStandardOutput = true;
+            Process.StartInfo.UseShellExecute = false;
+            Process.OutputDataReceived += OutputTextReceived;
         }
 
         ///<summary>Starts the underlying process and begins reading it's output.</summary>
         ///<param name="startInfo">Start configuration for the process.</param>
         ///<param name="ignoreMessages">Array of messages that should not be redirected when written to the underlying processes stdout.</param>
-        public ProcessManager(ProcessStartInfo startInfo, string[] ignorePatterns)
-            : this(startInfo)
+        public ProcessManager(ProcessStartInfo startInfo, string[] ignorePatterns) : this(startInfo)
         {
             _ignorePatterns = ignorePatterns;
         }
@@ -54,11 +57,13 @@ namespace Papyrus.Automation
         ///<summary>Starts the underlying process and begins reading it's output.</summary>
         public bool Start()
         {
-            if (this.Process.Start())
+            if (Process.Start())
             {
-                this.Process.BeginOutputReadLine();
+                Process.BeginOutputReadLine();
                 return true;
-            } else {
+            } 
+            else 
+            {
                 return false;
             }
         }
@@ -66,27 +71,40 @@ namespace Papyrus.Automation
         ///<summary>Frees the underlying process.</summary>
         public void Close()
         {
-            this.Process.CancelOutputRead();
-            this.Process.Close();
+            Process?.CancelOutputRead();
+            Process?.Close();
+        }
+
+        public void WaitForStart()
+        {
+            WaitForMatch(@"^.+ (Server started\.)");
+        }
+
+        public void WaitForExit()
+        {
+            WaitForMatch(@"(Quit correctly)");
         }
 
         ///<summary>Sends a command to the underlying processes stdin and executes it.</summary>
         ///<param name="cmd">Command to execute.</param>
         public void SendInput(string cmd)
         {
-            this.Process.StandardInput.Write(cmd + "\n");
+            Process.StandardInput.Write(cmd + "\n");
         }
 
         ///<summary>Halt program flow until the specified regex pattern has matched in the underlying processes stdout.</summary>
         public void WaitForMatch(string pattern)
         {
             bool ready = false;
-            int count = -1;
 
             while (!ready)
             {
-                count = Regex.Matches(_lastMessage, pattern).Count;
-                ready = count >= 1 ? true : false;
+                if (!string.IsNullOrEmpty(_lastMessage))
+                {
+                    ready = Regex.Matches(_lastMessage, pattern).Count >= 1;
+                }
+
+                Thread.Sleep(1);
             }
         }
 
@@ -107,7 +125,7 @@ namespace Papyrus.Automation
         {
             string shell = "";
             string args = "";
-            switch ((int)System.Environment.OSVersion.Platform)
+            switch ((int)Environment.OSVersion.Platform)
             {
                 case 0:
                 case 1:
@@ -162,7 +180,7 @@ namespace Papyrus.Automation
                 {
                     foreach (string pattern in _ignorePatterns)
                     {
-                        if (!String.IsNullOrWhiteSpace(e.Data) && Regex.Matches(e.Data, pattern).Count > 0)
+                        if (!string.IsNullOrWhiteSpace(e.Data) && Regex.Matches(e.Data, pattern).Count > 0)
                         {
                             showMsg = false;
                             break;

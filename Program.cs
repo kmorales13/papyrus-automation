@@ -2,351 +2,323 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Threading;
+using System.Threading.Tasks;
 using System.Timers;
 using Newtonsoft.Json;
-using Mono.Options;
 using Papyrus.Automation;
 using Papyrus.Networking;
 
-namespace Papyrus
-{
-    class Program
-    {
-        private static string _configPath = "configuration.json";
-        private const string _tempPath = "temp/";
-        public static RunConfiguration RunConfig;
-        private static BackupManager _backupManager;
-        private static RenderManager _renderManager;
-        public delegate void InputStreamHandler(string text);
-        static InputStreamHandler inStream;
-        private static Thread _ioThread;
-        private static bool _readInput = true;
-        public bool IsReady { get; private set; } = false;
-        private static Version _localVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+namespace Papyrus {
+	class Program {
+		// Config
+		private static string _configPath = "configuration.json";
+		private static ProcessManager bds;
+		private static BackupManager _backupManager;
+		private static bool _isAlive = true;
+		private static Version _localVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
 
-        static void Main(string[] args)
-        {
-            Console.WriteLine("papyrus automation tool v{0} build {1}\n\tby clarkx86 & DeepBlue\n", UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION), _localVersion.Build);
+		// Main
+		private static string[] _toIgnore;
+		private static ProcessStartInfo serverStartInfo;
 
-            bool printHelp = false;
+		// Timers
+		private static Timer keepAliveTimer;
+		private static Timer backupIntervalTimer;
+		private static Timer backupNotificationTimer;
 
-            OptionSet options = new OptionSet() {
-                { "h|help", "Displays a help screen.", (string h) => { printHelp = h != null; } },
-                { "c=|configuration=", "The configuration file to load settings from.", (string c) => { if (!String.IsNullOrWhiteSpace(c)) { _configPath = c.Trim(); } } }
-            };
-            System.Collections.Generic.List<string> extraOptions = options.Parse(args);
+		public static RunConfiguration RunConfig;
+		public delegate void InputStreamHandler(string text);
 
-            if (printHelp)
-            {
-                System.Console.WriteLine("Overview of available parameters:");
-                options.WriteOptionDescriptions(Console.Out);
-                System.Environment.Exit(0);
-            }
-            
-            if (File.Exists(_configPath))
-            {
-                RunConfig = LoadConfiguration(_configPath);
+		static void Main() {
+			Console.WriteLine("[Papyrus] Papyrus Automation Tool v{0} build {1}\n\tby clarkx86 & DeepBlue\n\tforked by ENX\n",
+				UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION), _localVersion.Build);
 
-                // ONLY FOR 1.14, should be fixed in the next BDS build
-                if (!RunConfig.StopBeforeBackup && System.Environment.OSVersion.Platform == PlatformID.Win32NT)
-                {
-                    Console.WriteLine("NOTICE: Hot-backups are currently not supported on Windows. Please enable \"StopBeforeBackup\" in the \"{0}\" instead.", _configPath);
-                    System.Environment.Exit(0);
-                }
+			if (File.Exists(_configPath)) {
+				try {
+					Setup();
+				} catch (Exception ex) {
+					HandleCrash(ex);
+				}
 
-                #region CONDITIONAL UPDATE CHECK
-                if (RunConfig.CheckForUpdates)
-                {
-                    Console.WriteLine("Checking for updates... ");
-                    UpdateChecker updateChecker = new UpdateChecker(ReleaseProvider.GITHUB_RELEASES, @"https://api.github.com/repos/clarkx86/papyrus-automation/releases/latest", @"^v?(\d+)\.(\d+)\.(\d+)");
+				Task main = Task.Run(() => {
+					while (_isAlive) {
+						ReadInput(Console.ReadLine());
+					}
+				});
 
-                    Version localVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-                    if (updateChecker.GetLatestVersion())
-                    {
-                        if (updateChecker.RemoteVersion > localVersion)
-                        {
-                            Console.WriteLine("\nA new update is available!\nLocal version:\t{0}\nRemote version:\t{1}\nVisit {2} to update.\n", UpdateChecker.ParseVersion(localVersion, VersionFormatting.MAJOR_MINOR_REVISION), UpdateChecker.ParseVersion(updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION), @"https://github.com/clarkx86/papyrus-automation/releases/latest");
-                        }
-                    } else
-                    {
-                        System.Console.WriteLine("Could not check for updates.");
-                    }
-                }
-                #endregion
+				main.Wait();
+			} else {
+				CreateConfig();
+			}
+		}
 
-                if (RunConfig.EnableRenders && String.IsNullOrWhiteSpace(RunConfig.PapyrusBinPath))
-                {
-                    Console.WriteLine("Disabling renders because no valid path to a Papyrus executable has been specified");
-                    RunConfig.EnableRenders = false;
-                }
+		private static void CreateConfig() {
+			Console.WriteLine("[Papyrus] No previous configuration file found. Creating one...");
 
-                #region BDS process and input thread
-                // BDS
-                ProcessStartInfo serverStartInfo = new ProcessStartInfo()
-                {
-                    FileName = Path.Join(RunConfig.BdsPath, System.Environment.OSVersion.Platform == PlatformID.Unix ? "bedrock_server" : "bedrock_server.exe"),
-                    WorkingDirectory = RunConfig.BdsPath
-                };
+			using (StreamWriter writer = new StreamWriter(_configPath)) {
+				writer.Write(JsonConvert.SerializeObject(new RunConfiguration() {
+					BdsPath = "",
+					BdsFileName = "",
+					WorldName = "Bedrock level",
+					PapyrusBinPath = "",
+					PapyrusGlobalArgs = "-w ${WORLD_PATH} -o ${OUTPUT_PATH} --htmlfile index.html -f webp -q -1 --deleteexistingupdatefolder",
+					PapyrusTasks = new string[] {
+							 "--dim 0",
+							 "--dim 1",
+							 "--dim 2"
+						},
+					PapyrusOutputPath = "",
+					ArchivePath = "./backups/",
+					BackupsToKeep = 10,
+					BackupOnStartup = true,
+					EnableKeepAlive = false,
+					EnableBackups = true,
+					EnableRenders = true,
+					BackupInterval = 60,
+					RenderInterval = 180,
+					PreExec = "",
+					PostExec = "",
+					QuietMode = false,
+					HideStdout = true,
+					BusyCommands = true,
+					StopBeforeBackup = (Environment.OSVersion.Platform != PlatformID.Win32NT ? false : true), // Should be reverted to "false" by default when 1.16 releases
+					NotifyBeforeStop = 60,
+					CheckForUpdates = true,
+				}, Formatting.Indented));
+			}
 
-                // Set environment variable for linux-based systems
-                if (System.Environment.OSVersion.Platform == PlatformID.Unix)
-                {
-                    serverStartInfo.EnvironmentVariables.Add("LD_LIBRARY_PATH", RunConfig.BdsPath);
-                }
+			Console.WriteLine("[Papyrus] Done! Please edit the \"{0}\" file and restart this application.", _configPath);
+		}
 
-                ProcessManager bds = new ProcessManager(serverStartInfo, new string[] {
-                    "^(" + RunConfig.WorldName.Trim() + @"\/\d+\.\w+\:\d+)",
-                    "^(Saving...)",
-                    "^(A previous save has not been completed.)",
-                    "^(Data saved. Files are now ready to be copied.)",
-                    "^(Changes to the level are resumed.)"
-                });
+		private static void Setup() {
+			Console.WriteLine("[Papyrus] Loading Setup...");
 
-                // Input thread
-                _ioThread = new Thread(new ThreadStart(() =>
-                {
-                    while (_readInput)
-                    {
-                        inStream?.Invoke(Console.ReadLine());
-                    }
-                }));
-                _ioThread.Start();
-                #endregion
+			LoadConfiguration(_configPath);
 
-                string worldPath = Path.Join(RunConfig.BdsPath, "worlds", RunConfig.WorldName);
-                string tempWorldPath = Path.Join(Directory.GetCurrentDirectory(), _tempPath, RunConfig.WorldName);
+			string _filePath = Path.Join(RunConfig.BdsPath,
+					string.IsNullOrEmpty(RunConfig.BdsFileName) ? (Environment.OSVersion.Platform == PlatformID.Unix ? "bedrock_server" : "bedrock_server.exe") : RunConfig.BdsFileName);
 
-                _renderManager = new RenderManager(bds, RunConfig);
-                _backupManager = new BackupManager(bds, RunConfig);
+			if (!File.Exists(_filePath)) {
+				Console.WriteLine("[Papyrus] ERROR: Unable to find bds exec at \"{0}\".", _filePath);
+				Environment.Exit(0);
+			}
 
-                if (RunConfig.BackupOnStartup)
-                {
-                    // Create initial world backup
-                    Console.WriteLine("Creating initial world backup...");
-                    _backupManager.CreateWorldBackup(worldPath, tempWorldPath, true, false); // If "StopBeforeBackup" is set to "true" this will also automatically start the server when it's done
-                }
+			serverStartInfo = new ProcessStartInfo() {
+				FileName = _filePath,
+				WorkingDirectory = RunConfig.BdsPath
+			};
 
-                // Start server in case the BackupManager hasn't started it yet
-                if (!bds.IsRunning) { bds.Start(); }
+			if (Environment.OSVersion.Platform == PlatformID.Unix) {
+				serverStartInfo.EnvironmentVariables.Add("LD_LIBRARY_PATH", RunConfig.BdsPath); // Set environment variable for linux-based systems
+			}
 
-                // Wait until BDS successfully started
-                bds.WaitForMatch(@"^.+ (Server started\.)");
+			_toIgnore = new string[] {
+				"^(" + RunConfig.WorldName.Trim() + @"\/\d+\.\w+\:\d+)",
+				"^(Saving...)",
+				"^(A previous save has not been completed.)",
+				"^(Data saved. Files are now ready to be copied.)",
+				"^(Changes to the level are resumed.)"
+			};
 
-                // Backup interval
-                if (RunConfig.EnableBackups)
-                {
-                    System.Timers.Timer backupIntervalTimer = new System.Timers.Timer(RunConfig.BackupInterval * 60000);
-                    backupIntervalTimer.AutoReset = true;
-                    backupIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
-                    {
-                        InvokeBackup(worldPath, tempWorldPath);
-                    };
-                    backupIntervalTimer.Start();
+			InitBDS();
+		}
 
-                    if (RunConfig.StopBeforeBackup)
-                    {
-                        System.Timers.Timer backupNotificationTimer = new System.Timers.Timer((RunConfig.BackupInterval * 60000) - Math.Clamp(RunConfig.NotifyBeforeStop * 1000, 0, RunConfig.BackupInterval * 60000));
-                        backupNotificationTimer.AutoReset = false;
-                        backupNotificationTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
-                        {
-                            bds.SendTellraw(String.Format("Shutting down server in {0} seconds to take a backup.", RunConfig.NotifyBeforeStop));
-                        };
-                        backupIntervalTimer.Start();
-                    }
-                }
+		private static void InitBDS() {
+			Console.WriteLine("[Papyrus] Initiating BDS...");
 
-                // Render interval
-                if (RunConfig.EnableRenders)
-                {
-                    System.Timers.Timer renderIntervalTimer = new System.Timers.Timer(RunConfig.RenderInterval * 60000);
-                    renderIntervalTimer.AutoReset = true;
-                    renderIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
-                    {
-                        InvokeRender(worldPath, tempWorldPath);
-                    };
-                    renderIntervalTimer.Start();
-                }
+			bds = new ProcessManager(serverStartInfo, _toIgnore);
+			bds.Start();
 
-                // Input thread
-                inStream = (string text) =>
-                {
-                    if (RunConfig.BusyCommands || (!_backupManager.Processing && !_renderManager.Processing))
-                    {
-                        #region CUSTOM COMMANDS
-                        MatchCollection cmd = Regex.Matches(text.ToLower().Trim(), @"(\S+)");
+			Console.WriteLine("[Papyrus] Server started, waiting for completion...");
+			bds.WaitForStart();
+			Console.WriteLine("[Papyrus] Server running.");
 
-                        if (cmd.Count > 0)
-                        {
-                            bool result = false;
-                            switch (cmd[0].Captures[0].Value)
-                            {
-                                case "force":
-                                    if (cmd.Count >= 3)
-                                    {
-                                        switch (cmd[1].Captures[0].Value)
-                                        {
-                                            case "start":
-                                                switch (cmd[2].Captures[0].Value)
-                                                {
-                                                    case "backup":
-                                                        InvokeBackup(worldPath, tempWorldPath);
-                                                        result = true;
-                                                        break;
+			if (RunConfig.EnableKeepAlive) {
+				keepAliveTimer = new Timer(10000) {
+					AutoReset = true
+				};
+				keepAliveTimer.Elapsed += (object sender, ElapsedEventArgs e) => {
+					if (!bds.IsRunning) {
+						Console.WriteLine("[Papyrus] KeepAlive enabled, server not running, starting...");
 
-                                                    case "render":
-                                                        InvokeRender(worldPath, tempWorldPath);
-                                                        result = true;
-                                                        break;
-                                                }
-                                                break;
-                                        }
-                                    }
-                                    break;
+						StopBDS();
+						Setup();
+					}
+				};
+				keepAliveTimer.Start();
+			}
 
-                                case "stop":
-                                    System.Timers.Timer shutdownTimer = new System.Timers.Timer();
-                                    shutdownTimer.AutoReset = false;
-                                    shutdownTimer.Elapsed += (object sender, ElapsedEventArgs e) => {
-                                        // _renderManager.Abort();
-                                        bds.SendInput("stop");
-                                        bds.Process.WaitForExit();
-                                        bds.Close();
-                                        _readInput = false;
-                                        Console.Write("papyrus quit correctly");
-                                        shutdownTimer.Close();
-                                    };
+			InitManagers();
+		}
 
-                                    if (cmd.Count == 2 && !String.IsNullOrWhiteSpace(cmd[1].Captures[0].Value))
-                                    {
-                                        try
-                                        {
-                                            double interval = Convert.ToDouble(cmd[1].Captures[0].Value);
-                                            shutdownTimer.Interval = (interval > 0 ? interval * 1000 : 1);
-                                            bds.SendTellraw(String.Format("Scheduled shutdown in {0} seconds...", interval));
-                                            result = true;
-                                        } catch
-                                        {
-                                            Console.WriteLine("Could not schedule shutdown because \"{0}\" is not a valid number.", cmd[1].Captures[0].Value);
-                                            result = false;
-                                        }
-                                    } else
-                                    {
-                                        shutdownTimer.Interval = 1;
-                                        result = true;
-                                    }
+		private static void InitManagers() {
+			Console.WriteLine("[Papyrus] Initiating Managers...");
 
-                                    if (result)
-                                    {
-                                        shutdownTimer.Start();
-                                    }
-                                    break;
+			_backupManager = new BackupManager(bds, RunConfig, keepAliveTimer);
 
-                                case "reload":
-                                    if (cmd.Count == 2 && cmd[1].Captures[0].Value == "papyrus")
-                                    {
-                                        RunConfig = LoadConfiguration(_configPath);
-                                    } else
-                                    {
-                                        bds.SendInput(text);
-                                    }
-                                    result = true;
-                                    break;
+			if (RunConfig.BackupOnStartup) {
+				Console.WriteLine("[Papyrus] Creating initial world backup...");
+				_backupManager.CreateWorldBackup(true, false); // If "StopBeforeBackup" is set to "true" this will also automatically start the server when it's done
+			}
 
-                                default:
-                                    result = true;
-                                    bds.SendInput(text);
-                                    break;
-                            }
+			if (RunConfig.EnableBackups) {
+				backupIntervalTimer = new Timer(RunConfig.BackupInterval * 60000) {
+					AutoReset = true
+				};
+				backupIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) => {
+					InvokeBackup();
+				};
+				backupIntervalTimer.Start();
 
-                            if (!result) { Console.WriteLine("Could not execute papyrus command \"{0}\".", text); }
-                        }
-                        #endregion
-                    }
-                    else
-                    {
-                        Console.WriteLine("Could not execute papyrus command \"{0}\". Please wait until all tasks have finished or enable \"BusyCommands\" in your \"{1}\".", text, _configPath);
-                    }
-                };
-            }
-            else
-            {
-                Console.WriteLine("No previous configuration file found. Creating one...");
+				if (RunConfig.StopBeforeBackup) {
+					backupNotificationTimer = new Timer((RunConfig.BackupInterval * 60000) - Math.Clamp(RunConfig.NotifyBeforeStop * 1000, 0, RunConfig.BackupInterval * 60000)) {
+						AutoReset = false
+					};
+					backupNotificationTimer.Elapsed += (object sender, ElapsedEventArgs e) => {
+						bds.SendTellraw(string.Format("[Papyrus] Restarting server in {0}.", RunConfig.NotifyBeforeStop));
+					};
+					backupNotificationTimer.Start();
+				}
+			}
 
-                using (StreamWriter writer = new StreamWriter(_configPath))
-                {
-                    writer.Write(JsonConvert.SerializeObject(new RunConfiguration()
-                    {
-                        BdsPath = "",
-                        WorldName = "Bedrock level",
-                        PapyrusBinPath = "",
-                        PapyrusGlobalArgs = "-w ${WORLD_PATH} -o ${OUTPUT_PATH} --htmlfile index.html -f webp -q -1 --deleteexistingupdatefolder",
-                        PapyrusTasks = new string[] {
-                             "--dim 0",
-                             "--dim 1",
-                             "--dim 2"
-                        },
-                        PapyrusOutputPath = "",
-                        ArchivePath = "./backups/",
-                        BackupsToKeep = 10,
-                        BackupOnStartup = true,
-                        EnableBackups = true,
-                        EnableRenders = true,
-                        BackupInterval = 60,
-                        RenderInterval = 180,
-                        PreExec = "",
-                        PostExec = "",
-                        QuietMode = false,
-                        HideStdout = true,
-                        BusyCommands = true,
-                        StopBeforeBackup = (System.Environment.OSVersion.Platform != PlatformID.Win32NT ? false : true), // Should be reverted to "false" by default when 1.16 releases
-                        NotifyBeforeStop = 60,
-                        CheckForUpdates = true,
-                    }, Formatting.Indented));
-                }
 
-                Console.WriteLine(String.Format("Done! Please edit the \"{0}\" file and restart this application.", _configPath));
-            }
-        }
+			Console.WriteLine("[Papyrus] Initiation complete.");
+		}
 
-        public static void InvokeBackup(string worldPath, string tempWorldPath)
-        {
-            if (!_backupManager.Processing)
-            {
-                _backupManager.CreateWorldBackup(worldPath, tempWorldPath, false, true);
-            }
-            else
-            {
-                if (!Program.RunConfig.QuietMode) { Console.WriteLine("A backup task is still running."); }
-            }
-        }
+		private static void StopBDS() {
+			keepAliveTimer?.Stop();
+			keepAliveTimer?.Close();
+			backupIntervalTimer?.Stop();
+			backupIntervalTimer?.Close();
+			backupNotificationTimer?.Stop();
+			backupNotificationTimer?.Close();
 
-        public static void InvokeRender(string worldPath, string tempWorldPath)
-        {
-            if (!_backupManager.Processing && !_renderManager.Processing)
-            {
-                _backupManager.CreateWorldBackup(worldPath, tempWorldPath, false, false);
-                _renderManager.Start(tempWorldPath);
-            }
-            else
-            {
-                if (!Program.RunConfig.QuietMode) { Console.WriteLine("A render task is still running."); }
-            }
-        }
+			if (bds.IsRunning) {
+				bds.SendInput("stop");
+				bds.WaitForExit();
+				bds.Close();
+			}
+		}
 
-        private static RunConfiguration LoadConfiguration(string configPath)
-        {
-            Console.Write("Loading configuration \"{0}\"... ", configPath);
+		private static void ReadInput(string input) {
+			if (RunConfig.BusyCommands || !_backupManager.Processing) {
+				#region CUSTOM COMMANDS
+				MatchCollection cmd = Regex.Matches(input.ToLower().Trim(), @"(\S+)");
 
-            RunConfiguration runConfig;
-            using (StreamReader reader = new StreamReader(Path.Join(Directory.GetCurrentDirectory(), _configPath)))
-            {
-                runConfig = JsonConvert.DeserializeObject<RunConfiguration>(reader.ReadToEnd());
-            }
+				if (cmd.Count > 0) {
+					bool result = false;
 
-            Console.WriteLine("Done!");
+					switch (cmd[0].Captures[0].Value) {
+						case "force":
+							Console.WriteLine("[Papyrus] Force command detected...");
 
-            return runConfig;
-        }
-    }
+							if (cmd.Count >= 3) {
+								switch (cmd[1].Captures[0].Value) {
+									case "start":
+										switch (cmd[2].Captures[0].Value) {
+											case "backup":
+												InvokeBackup();
+
+												result = true;
+
+												break;
+										}
+										break;
+								}
+							}
+
+							break;
+
+						case "stop":
+							Console.WriteLine("[Papyrus] Stopping server...");
+
+							StopBDS();
+
+							Console.WriteLine("[Papyrus] Server stopped.");
+
+							if (RunConfig.EnableKeepAlive) {
+								Console.WriteLine("[Papyrus] KeepAlive enabled, server will restart shortly.");
+
+								keepAliveTimer?.Start();
+							} else {
+								Console.WriteLine("[Papyrus] KeepAlive disabled, papyrus will exit now.");
+
+								_isAlive = false;
+							}
+
+							result = true;
+
+							break;
+
+						case "quit":
+							Console.WriteLine("[Papyrus] Quitting server...");
+
+							StopBDS();
+
+							Console.WriteLine("[Papyrus] Server stopped, papyrus will exit now.");
+
+							_isAlive = false;
+
+							result = true;
+
+							break;
+
+
+						default:
+							Console.WriteLine("[Papyrus] Custom command detected, redirecting to main process...");
+
+							bds.SendInput(input);
+
+							result = true;
+
+							break;
+					}
+
+					if (!result) {
+						Console.WriteLine("Could not execute command \"{0}\".", input);
+					}
+				}
+				#endregion
+			} else {
+				Console.WriteLine("Could not execute command \"{0}\". Please wait until all tasks have finished or enable \"BusyCommands\" in your \"{1}\".", input, _configPath);
+			}
+		}
+
+		public static void InvokeBackup() {
+			if (!_backupManager.Processing) {
+				_backupManager.CreateWorldBackup(false, true);
+			} else {
+				if (!RunConfig.QuietMode) {
+					Console.WriteLine("A backup task is still running.");
+				}
+			}
+		}
+
+		private static void LoadConfiguration(string configPath) {
+			Console.WriteLine("[Papyrus] Loading configuration...", configPath);
+
+			RunConfiguration runConfig;
+			using (StreamReader reader = new StreamReader(Path.Join(Directory.GetCurrentDirectory(), _configPath))) {
+				runConfig = JsonConvert.DeserializeObject<RunConfiguration>(reader.ReadToEnd());
+			}
+
+			Console.WriteLine("[Papyrus] Configuration loaded.");
+
+			// ONLY FOR 1.14, should be fixed in the next BDS build
+			if (!runConfig.StopBeforeBackup && Environment.OSVersion.Platform == PlatformID.Win32NT) {
+				Console.WriteLine("[Papyrus]: NOTICE Hot-backups are currently not supported on Windows. Please enable \"StopBeforeBackup\" in the \"{0}\" instead.", _configPath);
+				Environment.Exit(0);
+			}
+
+			RunConfig = runConfig;
+		}
+
+		private static void HandleCrash(Exception ex) {
+			Console.WriteLine("[Papyrus] Exception found, exiting. {0}", ex.Message);
+
+			StopBDS();
+
+			Environment.Exit(0);
+		}
+	}
 }

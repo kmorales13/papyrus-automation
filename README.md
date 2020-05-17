@@ -10,7 +10,9 @@
     </body>
 </html>
 
-This is a **Minecraft: Bedrock Server** (BDS) backup and map-rendering **automation** tool primarily made to create incremental backups and render interactive maps of your world using [**PapyrusCS**](https://github.com/mjungnickel18/papyruscs), all while the server is running without any server-downtime using BDS's `save hold | query | resume` commands.
+This is a **Minecraft: Bedrock Server** (BDS) backup **automation** tool primarily made to create incremental backups of your world, all while the server is running without any server-downtime using BDS's `save hold | query | resume` commands.
+
+This fork has removed the rendering portion of the code, and will focus in automation only.
 
 ## Table of contents
 - [Table of contents](#table-of-contents)
@@ -19,9 +21,8 @@ This is a **Minecraft: Bedrock Server** (BDS) backup and map-rendering **automat
   - [Prerequisites](#prerequisites)
   - [Installing and configuring](#installing-and-configuring)
   - [Incremental backups](#incremental-backups)
-  - [PapyrusCS integration](#papyruscs-integration)
 - [Configuration overview](#configuration-overview)
-- [Parameters & Commands](#parameters--commands)
+- [Commands](#commands)
 - [Disclaimer](#disclaimer-read-before-using)
 
 ## How does it work?
@@ -44,20 +45,16 @@ Now run this tool for the first time by typing:
 ```
 ./papyrus-automation
 ```
-This will generate a new `configuration.json` in the same directory. Edit this file and specify at least all required parameters ([see below for an overview](https://github.com/clarkx86/papyrus-automation#configuration)).
+This will generate a new `configuration.json` in the same directory. Edit this file and specify at least all required parameters (see below for an overview).
 
 Now you can restart the tool one more time with the same command as above. It should now spawn the BDS instance for you and execute renders on the specified interval (do not start the server manually).
 Once the server has launched through this tool you will be able to use the server console and use it's commands just like you normally would.
 
+### Keep Alive
+This tool can automatically start your server in case it stops or crashes. Set the option `EnableKeepAlive` to `true` in the configuration file to enable it.
+
 ### Incremental backups
 To create incremental world backups make sure the `CreateBackups` option is set to `true`. Backups will be stored in the directory specified by `ArchivePath`. This tool will automatically delete the oldest backups in that directory according to the threshold specified by the `BackupsToKeep` option to prevent eventually running out of disk space.
-
-### PapyrusCS integration
-This tool can automatically execute the **PapyrusCS** map-rendering tool on an interval. To do so you have to set `EnableRenders` to `true` and specify an interval in minutes with `RenderInterval`.
-You can add your own arguments that will be attached when PapyrusCS is called. When configuring you will find two keys, `PapyrusGlobalArgs` and an array called `PapyrusTasks`. The value in `PapyrusGlobalArgs` specifies arguments that will be attached for each PapyrusCS task when executed, while `PapyrusTasks` represent an array of individual processes (or tasks). Adding an entry to the array represents another task that will be executed after the previous one has finished, this way it is possible to make PapyrusCS render multiple dimensions or have different configurations in general. Again, the same `PapyrusGlobalArgs` will be present for each of these tasks individually.
-
-When specifying additional arguments for `PapyrusGlobalArgs` please make sure to **append** to the pre-generated entry (do not edit the `-w` and `-o` parameters!).
-Please thoroughly verify that your paths and arguments are correct, you can find a configuration-example [here](https://github.com/clarkx86/papyrus-automation/blob/master/examples/basic_example.json).
 
 ## Configuration overview
 When you run this tool for the first time, it will generate a `configuration.json` and terminate. Before restarting the tool, edit this file to your needs. Here is a quick overview:
@@ -65,6 +62,9 @@ When you run this tool for the first time, it will generate a `configuration.jso
 KEY               VALUE               ABOUT
 ----------------------------------------------------------
 BdsPath           String  (!)         Path to the BDS root directory
+
+BdsFileName       String              If not specified, bedrock_server or 
+                                      bedrock_server.exe will be used
 
 WorldName         String  (!)         Name of the world located in the servers
                                       /worlds/ directory (specify merely the name and
@@ -97,14 +97,9 @@ BackupOnStartup   Boolean (!)         Whether to create a full backup of the spe
                                       IMPORTANT: It is highly encouraged to leave
                                       this setting on "true"
 
-EnableRenders     Boolean (!)         Whether to create an interactive map of the world
-                                      using PapyrusCS
-
 EnableBackups     Boolean (!)         Whether to create world-backups as .zip-archives
 
-RenderInterval    Double              Time in seconds to run a backup and render map
-
-BackupInterval    Double              Time in seconds to take a backup and create a
+BackupInterval    Double              Time in minutes to take a backup and create a
                                       .zip-archive
 
 PreExec           String              An arbitrary command that gets executed before
@@ -131,26 +126,11 @@ NotifyBeforeStop  Integer             Time in seconds before stopping the server
                                       backup, players on the server will be
                                       notified with a chat message
 
-CheckForUpdates   Boolean (!)         Whether to check for updates on startup
-
 * values marked with (!) are required, non-required values should be provided depending on your specific configuration
 ```
-You can find an example configuration [here](https://github.com/clarkx86/papyrus-automation/blob/master/examples/basic_example.json).
+You can find an example configuration [here](https://github.com/kmorales13/papyrus-automation/blob/master/examples/basic_example.json).
 
-## Parameters & Commands
-### Parameters
-Overview of available launch parameters:
-```
-PARAMETER                             ABOUT
-----------------------------------------------------------
--c | --config                         Specifies a custom configuration file
-                                      (Default: configuration.json)
-
--h | --help                           Prints an overview of available parameters           
-```
-Parameters are optional and will default to their default values if not specified.
-
-### Commands
+## Commands
 papyrus.automation also provides a few new, and overloads some existing commands that you can execute to force-invoke backup- or rendering tasks and schedule server shutdowns.
 ```
 COMMAND                               ABOUT
@@ -171,4 +151,4 @@ reload papyrus                        Reloads the previously specified (or defau
 ## Disclaimer! Read before using!
 Use this tool at **your own risk**! When using this software you agree to not hold us liable for any corrupted save data or deleted files. Make sure to configure everything correctly and thoroughly!
 
-If you find any bugs, please report them on the issue tracker here on GitHub, our dedicated [Discord server](https://discord.gg/J2sBaXa) or send me an [e-mail](mailto:clarkx86@outlook.com?subject=GitHub%3A%20papyrus-automation). 
+If you find any bugs, please report them on the issue tracker here on GitHub.
